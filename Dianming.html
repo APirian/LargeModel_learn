@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智能点名系统</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        neum: { bg: '#f0f4f8', card: '#ffffff', blue: '#0071e3', lightBlue: '#d7e8ff',
+          gray: '#86868b', dark: '#1d1d1f', red: '#ff3b30', green: '#34c759', yellow: '#ffcc00' }
+      },
+      boxShadow: {
+        'neu': '8px 8px 16px #d1d9e6, -8px -8px 16px #ffffff',
+        'neu-inset': 'inset 4px 4px 8px #d1d9e6, inset -4px -4px 8px #ffffff',
+        'neu-btn': '4px 4px 8px #d1d9e6, -4px 4px 8px #ffffff',
+        'neu-btn-danger': '4px 4px 8px #ffd1d1, -4px -4px 8px #ffffff',
+      }
+    }
+  }
+}
+</script>
+<style type="text/tailwindcss">
+@layer utilities {
+  .apple-container { @apply max-w-[980px] mx-auto px-4 md:px-6; }
+  .neu-card { @apply bg-neum-bg rounded-[32px] shadow-neu p-8 transition-all; }
+  .neu-btn { @apply rounded-full px-6 py-3 font-medium text-[16px] shadow-neu-btn active:scale-95 transition-all; }
+  .neu-btn-primary { @apply neu-btn bg-neum-blue text-white; }
+  .neu-btn-success { @apply neu-btn bg-neum-green text-white; }
+  .neu-btn-warning { @apply neu-btn bg-neum-yellow text-neum-dark; }
+  .neu-btn-danger {
+    @apply rounded-full px-5 py-2.5 text-[15px] font-medium shadow-neu-btn-danger
+    bg-neum-red text-white transition-all hover:bg-red-400 active:scale-95 active:shadow-none;
+  }
+  .neu-btn-light { @apply neu-btn bg-white text-neum-dark; }
+  .neu-input { @apply w-full px-4 py-3 rounded-xl bg-white shadow-neu-inset border-0 outline-none focus:ring-2 focus:ring-neum-blue; }
+  .tab { @apply text-[16px] font-medium px-6 py-3 cursor-pointer text-neum-gray relative; }
+  .tab.active { @apply text-neum-blue; }
+  .tab.active::after { content:''; @apply absolute bottom-0 left-1/2 -translate-x-1/2 w-6 h-1 bg-neum-blue rounded-full; }
+  .name-display { @apply bg-neum-lightBlue rounded-[32px] py-10 px-6 text-center my-6 shadow-neu text-[clamp(2.5rem,5vw,3.5rem)] font-bold; }
+  .toast { @apply fixed top-20 left-1/2 -translate-x-1/2 bg-black/80 text-white px-5 py-2.5 rounded-xl z-50 opacity-0 transition-opacity duration-300; }
+  .toast.show { @apply opacity-100; }
+}
+</style>
+</head>
+<body class="bg-neum-bg text-neum-dark min-h-screen">
+
+<div class="py-8 text-center">
+  <h1 class="text-[clamp(1.8rem,4vw,2.5rem)] font-semibold">智能点名系统</h1>
+</div>
+
+<div class="apple-container mb-6">
+  <div class="flex justify-center flex-wrap gap-2 border-b border-gray-200 pb-2">
+    <div class="tab active" data-target="panel-student">学生管理</div>
+    <div class="tab" data-target="panel-seq">顺序点名</div>
+    <div class="tab" data-target="panel-random">随机点名</div>
+    <div class="tab" data-target="panel-score">积分统计</div>
+  </div>
+</div>
+
+<div class="apple-container space-y-6 mb-20">
+  <div id="toast" class="toast"></div>
+
+  <!-- 学生管理 -->
+  <div id="panel-student" class="panel space-y-6">
+    <div class="neu-card">
+      <h2 class="text-xl font-semibold mb-4">学生录入</h2>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <label class="text-sm block mb-1">单个添加</label>
+          <div class="flex gap-2">
+            <input id="sid" placeholder="学号" class="neu-input flex-1">
+            <input id="sname" placeholder="姓名" class="neu-input flex-1">
+            <input id="sclass" placeholder="班级" class="neu-input flex-1">
+            <button onclick="addStudent()" class="neu-btn-primary">添加</button>
+          </div>
+        </div>
+        <div>
+          <label class="text-sm block mb-1">批量录入（学号,姓名,班级）</label>
+          <textarea id="batch" rows="3" placeholder="101,小明,计科2201" class="neu-input"></textarea>
+          <button onclick="addBatch()" class="neu-btn-primary mt-2 w-full">批量导入</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="neu-card">
+      <h2 class="text-xl font-semibold mb-4">Excel 导入</h2>
+      <div class="space-y-3">
+        <input type="file" id="excelFile" accept=".xlsx,.xls" class="neu-input">
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="previewExcel()" class="neu-btn-primary">预览</button>
+          <button onclick="setCol('name')" class="neu-btn-success">姓名列</button>
+          <button onclick="setCol('id')" class="neu-btn-primary">学号列</button>
+        </div>
+        <input id="defaultClassName" class="neu-input" placeholder="统一班级名称">
+        <div class="overflow-x-auto max-h-48 rounded-xl shadow-neu-inset bg-white p-2 hidden" id="excelPreview"></div>
+        <button onclick="doImport()" class="neu-btn-success w-full" id="importBtn" disabled>确认导入</button>
+      </div>
+    </div>
+
+    <div class="neu-card">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-semibold">学生列表</h2>
+        <div class="flex items-center gap-3">
+          <select id="studentClassFilter" class="neu-input w-40" onchange="renderStudents()">
+            <option value="all">全部班级</option>
+          </select>
+          <button onclick="batchDelete()" class="neu-btn-danger flex items-center gap-1.5">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+            批量删除
+          </button>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-left">
+          <thead class="border-b text-sm text-neum-gray">
+            <tr>
+              <th class="pb-3 w-10"><input type="checkbox" id="checkAll" onclick="toggleCheckAll()"></th>
+              <th class="pb-3">学号</th>
+              <th class="pb-3">姓名</th>
+              <th class="pb-3">班级</th>
+              <th class="pb-3 text-right">操作</th>
+            </tr>
+          </thead>
+          <tbody id="studentTable" class="divide-y text-sm"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- 顺序点名 + 班级筛选 -->
+  <div id="panel-seq" class="panel hidden">
+    <div class="neu-card text-center max-w-xl mx-auto">
+      <h2 class="text-xl font-semibold mb-3">顺序点名</h2>
+      <div class="mb-3">
+        <label class="text-sm mr-2">点名日期</label>
+        <input type="date" id="seqDate" class="neu-input w-40 mx-auto">
+      </div>
+      <div class="mb-3">
+        <label class="text-sm mr-2">筛选班级</label>
+        <select id="seqClassFilter" class="neu-input w-40 mx-auto" onchange="updateSeqList()"></select>
+      </div>
+      <div class="mb-4 text-sm">当前：<span id="seqCount">0</span> 人</div>
+      <div id="seqDisplay" class="name-display">等待开始</div>
+      <div class="flex justify-center gap-3 mb-4 flex-wrap">
+        <button onclick="seqStart()" class="neu-btn-light">开始</button>
+        <button onclick="seqNext()" class="neu-btn-primary">下一个</button>
+      </div>
+      <div class="flex flex-wrap justify-center gap-2 mb-3">
+        <button onclick="seqRec(1)" class="neu-btn-success">到课 +1</button>
+        <button onclick="seqRec(0)" class="neu-btn-warning">请假</button>
+        <button onclick="seqRec(-2)" class="neu-btn-danger">迟到</button>
+        <button onclick="seqRec(-5)" class="neu-btn-danger">旷课</button>
+      </div>
+      <div class="flex items-center justify-center gap-2">
+        <input type="number" id="seqCustomScore" value="1" class="neu-input w-20 text-center">
+        <button onclick="seqPlusScore()" class="neu-btn-success">加分</button>
+        <button onclick="seqMinusScore()" class="neu-btn-danger">减分</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 随机点名 + 班级筛选 -->
+  <div id="panel-random" class="panel hidden">
+    <div class="neu-card text-center max-w-xl mx-auto">
+      <h2 class="text-xl font-semibold mb-2">🎲 随机点名</h2>
+      <div class="mb-3">
+        <label class="text-sm mr-2">点名日期</label>
+        <input type="date" id="randDate" class="neu-input w-40 mx-auto">
+      </div>
+      <div class="mb-3">
+        <label class="text-sm mr-2">筛选班级</label>
+        <select id="randClassFilter" class="neu-input w-40 mx-auto"></select>
+      </div>
+      <div class="mb-4 text-sm">当前：<span id="randCount">0</span> 人</div>
+      <div id="randDisplay" class="name-display">等待开始</div>
+      <div class="flex justify-center gap-3 mb-4 flex-wrap">
+        <button onclick="randStart()" class="neu-btn-light">滚动</button>
+        <button onclick="randStop()" class="neu-btn-primary">定格</button>
+        <button onclick="randReset()" class="neu-btn-light">重置</button>
+      </div>
+      <div class="flex flex-wrap justify-center gap-2 mb-3">
+        <button onclick="randRec(1)" class="neu-btn-success">到课 +1</button>
+        <button onclick="randRec(0)" class="neu-btn-warning">请假</button>
+        <button onclick="randRec(-2)" class="neu-btn-danger">迟到</button>
+        <button onclick="randRec(-5)" class="neu-btn-danger">旷课</button>
+      </div>
+      <div class="flex items-center justify-center gap-2">
+        <input type="number" id="randCustomScore" value="1" class="neu-input w-20 text-center">
+        <button onclick="randPlusScore()" class="neu-btn-success">加分</button>
+        <button onclick="randMinusScore()" class="neu-btn-danger">减分</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 积分统计 + 班级筛选 + 按班级导出 -->
+  <div id="panel-score" class="panel hidden space-y-6">
+    <div class="neu-card flex flex-wrap gap-3 justify-between items-center">
+      <div class="flex items-center gap-2">
+        <span class="text-sm inline-block text-center leading-tight">统计<br>班级</span>
+        <select id="scoreClassFilter" class="neu-input w-auto" onchange="refreshScore()">
+          <option value="all">全部班级</option>
+        </select>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-sm">日期</span>
+        <select id="dateSelect" onchange="refreshScore()" class="neu-input w-auto"></select>
+      </div>
+      <button onclick="exportExcel()" class="neu-btn-success">导出Excel</button>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="neu-card text-center py-4"><p class="text-sm">到课</p><p id="cNormal" class="text-xl font-semibold text-neum-green">0</p></div>
+      <div class="neu-card text-center py-4"><p class="text-sm">请假</p><p id="cLeave" class="text-xl font-semibold text-neum-yellow">0</p></div>
+      <div class="neu-card text-center py-4"><p class="text-sm">迟到</p><p id="cLate" class="text-xl font-semibold text-red-500">0</p></div>
+      <div class="neu-card text-center py-4"><p class="text-sm">旷课</p><p id="cAbsent" class="text-xl font-semibold text-neum-red">0</p></div>
+    </div>
+
+    <div class="neu-card h-72"><canvas id="scoreChart"></canvas></div>
+
+    <div class="neu-card">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="border-b">
+            <tr>
+              <td class="pb-3">学号</td>
+              <td class="pb-3">姓名</td>
+              <td class="pb-3">班级</td>
+              <td class="pb-3 text-center">到课</td>
+              <td class="pb-3 text-center">请假</td>
+              <td class="pb-3 text-center">迟到</td>
+              <td class="pb-3 text-center">旷课</td>
+              <td class="pb-3 text-center">积分</td>
+            </tr>
+          </thead>
+          <tbody id="scoreTable" class="divide-y"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 修改学生弹窗 -->
+<div id="editModal" class="fixed inset-0 bg-black/20 backdrop-blur-sm hidden items-center justify-center z-50">
+  <div class="neu-card max-w-sm w-full mx-4">
+    <h3 class="text-lg font-semibold mb-3">修改学生信息</h3>
+    <input type="hidden" id="editIndex">
+    <input id="editId" class="neu-input mb-2" placeholder="学号">
+    <input id="editName" class="neu-input mb-2" placeholder="姓名">
+    <input id="editClass" class="neu-input mb-4" placeholder="班级">
+    <div class="flex justify-end gap-2">
+      <button onclick="closeEdit()" class="neu-btn-light">取消</button>
+      <button onclick="saveEdit()" class="neu-btn-primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 署名 @APirian -->
+<div class="text-center text-sm text-neum-gray py-6">
+  系统制作 @APirian
+</div>
+
+<script>
+let students = JSON.parse(localStorage.getItem('students') || '[]')
+let records = JSON.parse(localStorage.getItem('records') || '{}')
+let today = new Date().toISOString().split('T')[0]
+
+let seqList = [...students]
+let seqIndex = 0
+let rollTimer = null
+let isRolling = false
+
+// 提示框
+function showToast(msg) {
+  const t = document.getElementById('toast')
+  t.textContent = msg
+  t.classList.add('show')
+  setTimeout(() => t.classList.remove('show'), 1400)
+}
+
+// 切换标签
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'))
+    tab.classList.add('active')
+    const target = tab.dataset.target
+    document.querySelectorAll('.panel').forEach(p => p.classList.add('hidden'))
+    document.getElementById(target).classList.remove('hidden')
+    if (target === 'panel-seq') {
+      document.getElementById('seqDate').value = today
+      updateAllClassSelects()
+      updateSeqList()
+    }
+    if (target === 'panel-random') {
+      document.getElementById('randDate').value = today
+      updateAllClassSelects()
+      updateRandList()
+    }
+    if (target === 'panel-student') {
+      updateAllClassSelects()
+      renderStudents()
+    }
+    if (target === 'panel-score') {
+      updateAllClassSelects()
+      initDateSelect()
+      refreshScore()
+      drawChart()
+    }
+  })
+})
+
+// 统一更新所有班级下拉框
+function updateAllClassSelects() {
+  const clsSet = new Set(students.map(s => s.className || '未分班'))
+  const arr = Array.from(clsSet).sort()
+  const studentSel = document.getElementById('studentClassFilter')
+  const seqSel = document.getElementById('seqClassFilter')
+  const randSel = document.getElementById('randClassFilter')
+  const scoreSel = document.getElementById('scoreClassFilter')
+
+  let ops = '<option value="all">全部班级</option>'
+  arr.forEach(c => { ops += `<option value="${c}">${c}</option>` })
+  studentSel.innerHTML = scoreSel.innerHTML = ops
+
+  let seqRandOps = '<option value="all">全部</option>'
+  arr.forEach(c => { seqRandOps += `<option value="${c}">${c}</option>` })
+  seqSel.innerHTML = randSel.innerHTML = seqRandOps
+}
+
+// 顺序点名列表
+function updateSeqList() {
+  const c = document.getElementById('seqClassFilter').value
+  seqList = c === 'all' ? [...students] : students.filter(s => (s.className || '未分班') === c)
+  document.getElementById('seqCount').textContent = seqList.length
+}
+
+// 随机点名列表
+function getRandList() {
+  const c = document.getElementById('randClassFilter').value
+  return c === 'all' ? [...students] : students.filter(s => (s.className || '未分班') === c)
+}
+function updateRandList() {
+  document.getElementById('randCount').textContent = getRandList().length
+}
+
+// 渲染学生列表（带班级筛选）
+function renderStudents() {
+  const selCls = document.getElementById('studentClassFilter').value
+  let showList = students
+  if (selCls !== 'all') {
+    showList = students.filter(s => (s.className || '未分班') === selCls)
+  }
+
+  const el = document.getElementById('studentTable')
+  if (showList.length === 0) {
+    el.innerHTML = `<tr><td colspan="5" class="py-4 text-center text-sm">暂无学生</td></tr>`
+    return
+  }
+
+  el.innerHTML = showList.map((s, i) => {
+    const realIndex = students.findIndex(x => x.id === s.id)
+    return `
+    <tr>
+      <td class="py-3"><input type="checkbox" class="student-check" data-index="${realIndex}"></td>
+      <td class="py-3">${s.id}</td>
+      <td class="py-3">${s.name}</td>
+      <td class="py-3">${s.className || '-'}</td>
+      <td class="py-3 text-right">
+        <button onclick="openEdit(${realIndex})" class="text-neum-blue mr-3">修改</button>
+        <button onclick="delStudent(${realIndex})" class="text-neum-red">删除</button>
+      </td>
+    </tr>`
+  }).join('')
+}
+
+// 全选
+function toggleCheckAll() {
+  const v = document.getElementById('checkAll').checked
+  document.querySelectorAll('.student-check').forEach(cb => cb.checked = v)
+}
+
+// 批量删除
+function batchDelete() {
+  const list = Array.from(document.querySelectorAll('.student-check:checked'))
+  if (list.length === 0) return alert('请选择学生')
+  if (!confirm('确定删除选中？')) return
+  list.map(c => +c.dataset.index).sort((a, b) => b - a).forEach(i => students.splice(i, 1))
+  save()
+  showToast('删除成功')
+}
+
+// 添加学生
+function addStudent() {
+  const id = document.getElementById('sid').value.trim()
+  const name = document.getElementById('sname').value.trim()
+  const cls = document.getElementById('sclass').value.trim()
+  if (!id || !name) return alert('请填写学号、姓名')
+  if (students.some(s => s.id === id)) return alert('学号重复')
+  students.push({ id, name, className: cls })
+  save()
+  document.getElementById('sid').value = ''
+  document.getElementById('sname').value = ''
+  document.getElementById('sclass').value = ''
+  showToast('添加成功')
+}
+
+// 批量录入
+function addBatch() {
+  document.getElementById('batch').value.trim().split('\n').forEach(line => {
+    const p = line.split(',').map(s => s?.trim() || '')
+    const id = p[0], name = p[1], cls = p[2] || ''
+    if (id && name && !students.some(s => s.id === id)) {
+      students.push({ id, name, className: cls })
+    }
+  })
+  save()
+  document.getElementById('batch').value = ''
+  showToast('批量导入成功')
+}
+
+// 删除单个
+function delStudent(i) {
+  students.splice(i, 1)
+  save()
+  showToast('删除成功')
+}
+
+// 修改学生
+function openEdit(i) {
+  const s = students[i]
+  document.getElementById('editIndex').value = i
+  document.getElementById('editId').value = s.id
+  document.getElementById('editName').value = s.name
+  document.getElementById('editClass').value = s.className || ''
+  document.getElementById('editModal').style.display = 'flex'
+}
+function closeEdit() {
+  document.getElementById('editModal').style.display = 'none'
+}
+function saveEdit() {
+  const i = +document.getElementById('editIndex').value
+  const id = document.getElementById('editId').value.trim()
+  const name = document.getElementById('editName').value.trim()
+  const cls = document.getElementById('editClass').value.trim()
+  if (!id || !name) return alert('学号、姓名不能为空')
+  const dup = students.some((s, idx) => s.id === id && idx !== i)
+  if (dup) return alert('学号已存在')
+  students[i] = { id, name, className: cls }
+  save()
+  closeEdit()
+  showToast('修改成功')
+}
+
+function save() {
+  localStorage.setItem('students', JSON.stringify(students))
+  renderStudents()
+}
+
+// Excel 导入
+let excelRows = [], selCol = -1, colMap = { name: -1, id: -1 }
+function previewExcel() {
+  const f = document.getElementById('excelFile').files[0]
+  if (!f) return alert('请选择文件')
+  const r = new FileReader()
+  r.onload = e => {
+    const wb = XLSX.read(e.target.result)
+    excelRows = XLSX.utils.sheet_to_json(wb.Sheets[0], { header: 1 })
+    document.getElementById('excelPreview').classList.remove('hidden')
+  }
+  r.readAsArrayBuffer(f)
+}
+function selectCol(i) { selCol = i }
+function setCol(t) {
+  if (selCol < 0) return alert('先点表格选中一列')
+  colMap[t] = selCol
+  document.getElementById('importBtn').disabled = !(colMap.id >= 0 && colMap.name >= 0)
+}
+function doImport() {
+  const cls = document.getElementById('defaultClassName').value.trim()
+  excelRows.slice(1).forEach(r => {
+    const id = (r[colMap.id] ?? '').toString().trim()
+    const name = (r[colMap.name] ?? '').toString().trim()
+    if (id && name && !students.some(s => s.id === id)) {
+      students.push({ id, name, className: cls })
+    }
+  })
+  save()
+  showToast('导入成功')
+}
+
+// 顺序点名
+function seqStart() {
+  if (seqList.length === 0) return alert('当前班级无学生')
+  seqIndex = 0
+  showSeqStudent()
+}
+function seqNext() {
+  seqIndex++
+  if (seqIndex >= seqList.length) {
+    document.getElementById('seqDisplay').innerText = '点名结束'
+    showToast('✅ 本轮点名完成')
+    seqIndex = 0
+    return
+  }
+  showSeqStudent()
+}
+function showSeqStudent() {
+  document.getElementById('seqDisplay').innerText = seqList[seqIndex].name
+}
+function seqRec(type) {
+  if (seqIndex >= seqList.length) return
+  const d = document.getElementById('seqDate').value || today
+  const sid = seqList[seqIndex].id
+  if (!records[d]) records[d] = {}
+  if (!records[d][sid]) records[d][sid] = { n: 0, l: 0, lt: 0, a: 0, s: 0 }
+  const o = records[d][sid]
+  if (type === 1) o.n++
+  if (type === 0) o.l++
+  if (type === -2) o.lt++
+  if (type === -5) o.a++
+  o.s = o.n + o.lt * -2 + o.a * -5
+  localStorage.setItem('records', JSON.stringify(records))
+  showToast('操作成功')
+}
+function seqPlusScore() {
+  if (seqIndex >= seqList.length) return
+  const d = document.getElementById('seqDate').value || today
+  const sid = seqList[seqIndex].id
+  const v = +document.getElementById('seqCustomScore').value || 1
+  if (!records[d]) records[d] = {}
+  if (!records[d][sid]) records[d][sid] = { n: 0, l: 0, lt: 0, a: 0, s: 0 }
+  records[d][sid].s += v
+  localStorage.setItem('records', JSON.stringify(records))
+  showToast(`+${v} 成功`)
+}
+function seqMinusScore() {
+  if (seqIndex >= seqList.length) return
+  const d = document.getElementById('seqDate').value || today
+  const sid = seqList[seqIndex].id
+  const v = +document.getElementById('seqCustomScore').value || 1
+  if (!records[d]) records[d] = {}
+  if (!records[d][sid]) records[d][sid] = { n: 0, l: 0, lt: 0, a: 0, s: 0 }
+  records[d][sid].s -= v
+  localStorage.setItem('records', JSON.stringify(records))
+  showToast(`-${v} 成功`)
+}
+
+// 随机点名
+function randStart() {
+  const list = getRandList()
+  if (list.length === 0) return alert('当前班级无学生')
+  isRolling = true
+  clearInterval(rollTimer)
+  rollTimer = setInterval(() => {
+    const r = Math.floor(Math.random() * list.length)
+    document.getElementById('randDisplay').innerText = list[r].name
+  }, 60)
+}
+function randStop() {
+  clearInterval(rollTimer)
+  isRolling = false
+}
+function randReset() {
+  randStop()
+  document.getElementById('randDisplay').innerText = '等待开始'
+}
+function randRec(type) {
+  const name = document.getElementById('randDisplay').innerText
+  const stu = students.find(s => s.name === name)
+  if (!stu) return alert('请先点名')
+  const d = document.getElementById('randDate').value || today
+  if (!records[d]) records[d] = {}
+  if (!records[d][stu.id]) records[d][stu.id] = { n: 0, l: 0, lt: 0, a: 0, s: 0 }
+  const o = records[d][stu.id]
+  if (type === 1) o.n++
+  if (type === 0) o.l++
+  if (type === -2) o.lt++
+  if (type === -5) o.a++
+  o.s = o.n + o.lt * -2 + o.a * -5
+  localStorage.setItem('records', JSON.stringify(records))
+  showToast('操作成功')
+}
+function randPlusScore() {
+  const name = document.getElementById('randDisplay').innerText
+  const stu = students.find(s => s.name === name)
+  if (!stu) return alert('请先点名')
+  const d = document.getElementById('randDate').value || today
+  const v = +document.getElementById('randCustomScore').value || 1
+  if (!records[d]) records[d] = {}
+  if (!records[d][stu.id]) records[d][stu.id] = { n: 0, l: 0, lt: 0, a: 0, s: 0 }
+  records[d][stu.id].s += v
+  localStorage.setItem('records', JSON.stringify(records))
+  showToast(`+${v} 成功`)
+}
+function randMinusScore() {
+  const name = document.getElementById('randDisplay').innerText
+  const stu = students.find(s => s.name === name)
+  if (!stu) return alert('请先点名')
+  const d = document.getElementById('randDate').value || today
+  const v = +document.getElementById('randCustomScore').value || 1
+  if (!records[d]) records[d] = {}
+  if (!records[d][stu.id]) records[d][stu.id] = { n: 0, l: 0, lt: 0, a: 0, s: 0 }
+  records[d][stu.id].s -= v
+  localStorage.setItem('records', JSON.stringify(records))
+  showToast(`-${v} 成功`)
+}
+
+// 统计
+function initDateSelect() {
+  const sel = document.getElementById('dateSelect')
+  sel.innerHTML = `<option value="all">全部</option>`
+  Object.keys(records).sort().forEach(d => {
+    sel.innerHTML += `<option value="${d}">${d}</option>`
+  })
+}
+
+function refreshScore() {
+  const date = document.getElementById('dateSelect').value
+  const clsFilter = document.getElementById('scoreClassFilter').value
+
+  // 先按班级筛选学生
+  let targetStudents = students
+  if (clsFilter !== 'all') {
+    targetStudents = students.filter(s => (s.className || '未分班') === clsFilter)
+  }
+
+  const data = {}
+  targetStudents.forEach(s => {
+    data[s.id] = { id: s.id, name: s.name, className: s.className || '-', n: 0, l: 0, lt: 0, a: 0, s: 0 }
+  })
+
+  // 再按日期统计
+  if (date === 'all') {
+    Object.values(records).forEach(day => {
+      Object.entries(day).forEach(([id, v]) => {
+        if (data[id]) {
+          data[id].n += v.n
+          data[id].l += v.l
+          data[id].lt += v.lt
+          data[id].a += v.a
+          data[id].s += v.s
+        }
+      })
+    })
+  } else {
+    const day = records[date] || {}
+    Object.entries(day).forEach(([id, v]) => {
+      if (data[id]) Object.assign(data[id], v)
+    })
+  }
+
+  const list = Object.values(data)
+  let tn = 0, tl = 0, tlt = 0, ta = 0
+  list.forEach(x => { tn += x.n; tl += x.l; tlt += x.lt; ta += x.a })
+  document.getElementById('cNormal').innerText = tn
+  document.getElementById('cLeave').innerText = tl
+  document.getElementById('cLate').innerText = tlt
+  document.getElementById('cAbsent').innerText = ta
+
+  document.getElementById('scoreTable').innerHTML = list.map(x => `
+  <tr>
+    <td class="py-3">${x.id}</td>
+    <td class="py-3">${x.name}</td>
+    <td class="py-3">${x.className}</td>
+    <td class="py-3 text-center">${x.n}</td>
+    <td class="py-3 text-center">${x.l}</td>
+    <td class="py-3 text-center">${x.lt}</td>
+    <td class="py-3 text-center">${x.a}</td>
+    <td class="py-3 text-center ${x.s >= 0 ? 'text-neum-green' : 'text-neum-red'}">${x.s}</td>
+  </tr>`).join('')
+
+  drawChart()
+}
+
+// 图表
+function drawChart() {
+  const ctx = document.getElementById('scoreChart').getContext('2d')
+  const clsFilter = document.getElementById('scoreClassFilter').value
+  let targetStudents = students
+  if (clsFilter !== 'all') {
+    targetStudents = students.filter(s => (s.className || '未分班') === clsFilter)
+  }
+
+  const map = {}
+  targetStudents.forEach(s => { map[s.id] = { name: s.name, score: 0 } })
+  Object.values(records).forEach(day => {
+    Object.entries(day).forEach(([id, v]) => {
+      if (map[id]) map[id].score += v.s
+    })
+  })
+
+  const arr = Object.values(map).sort((a, b) => b.score - a.score).slice(0, 10)
+  if (window.chart) window.chart.destroy()
+  window.chart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: arr.map(x => x.name),
+      datasets: [{ data: arr.map(x => x.score), backgroundColor: '#0071e3', borderRadius: 8 }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+  })
+}
+
+// 导出（按班级 + 按日期）
+function exportExcel() {
+  const date = document.getElementById('dateSelect').value
+  const clsFilter = document.getElementById('scoreClassFilter').value
+  const title = (clsFilter === 'all' ? '全部班级' : clsFilter) + '_' + (date === 'all' ? '全部日期' : date)
+
+  // 按班级筛选学生
+  let targetStudents = students
+  if (clsFilter !== 'all') {
+    targetStudents = students.filter(s => (s.className || '未分班') === clsFilter)
+  }
+
+  const data = []
+  targetStudents.forEach(s => {
+    data.push({ 学号: s.id, 姓名: s.name, 班级: s.className || '-', 到课: 0, 请假: 0, 迟到: 0, 旷课: 0, 积分: 0 })
+  })
+
+  if (date === 'all') {
+    Object.values(records).forEach(day => {
+      Object.entries(day).forEach(([id, v]) => {
+        const it = data.find(x => x.学号 === id)
+        if (it) { it.到课 += v.n; it.请假 += v.l; it.迟到 += v.lt; it.旷课 += v.a; it.积分 += v.s }
+      })
+    })
+  } else {
+    const day = records[date] || {}
+    Object.entries(day).forEach(([id, v]) => {
+      const it = data.find(x => x.学号 === id)
+      if (it) { it.到课 = v.n; it.请假 = v.l; it.迟到 = v.lt; it.旷课 = v.a; it.积分 = v.s }
+    })
+  }
+
+  const aoo = [
+    ['智能点名统计表'],
+    ['班级：' + (clsFilter === 'all' ? '全部班级' : clsFilter)],
+    ['日期：' + (date === 'all' ? '全部日期' : date)],
+    [],
+    ['学号', '姓名', '班级', '到课', '请假', '迟到', '旷课', '总积分']
+  ]
+  data.forEach(it => aoo.push([it.学号, it.姓名, it.班级, it.到课, it.请假, it.迟到, it.旷课, it.积分]))
+
+  const ws = XLSX.utils.aoa_to_sheet(aoo)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, '记录')
+  XLSX.writeFile(wb, `点名表_${title}.xlsx`)
+}
+
+// 初始化
+renderStudents()
+updateAllClassSelects()
+document.getElementById('seqDate').value = today
+document.getElementById('randDate').value = today
+</script>
+</body>
+</html>
